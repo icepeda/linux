@@ -1,5 +1,5 @@
 /*
- * vrtc.c: Driver for virtual RTC device on Intel MID platform
+ * intel_mid_vrtc.c: Driver for virtual RTC device on Intel MID platform
  *
  * (C) Copyright 2009 Intel Corporation
  *
@@ -23,8 +23,8 @@
 #include <linux/sfi.h>
 #include <linux/platform_device.h>
 
-#include <asm/mrst.h>
-#include <asm/mrst-vrtc.h>
+#include <asm/intel-mid.h>
+#include <asm/intel_mid_vrtc.h>
 #include <asm/time.h>
 #include <asm/fixmap.h>
 
@@ -79,44 +79,36 @@ unsigned long vrtc_get_time(void)
 	/* vRTC YEAR reg contains the offset to 1972 */
 	year += 1972;
 
-	printk(KERN_INFO "vRTC: sec: %d min: %d hour: %d day: %d "
+	pr_info("vRTC: sec: %d min: %d hour: %d day: %d "
 		"mon: %d year: %d\n", sec, min, hour, mday, mon, year);
 
 	return mktime(year, mon, mday, hour, min, sec);
 }
 
+/* Only care about the minutes and seconds */
 int vrtc_set_mmss(unsigned long nowtime)
 {
+	int real_sec, real_min;
 	unsigned long flags;
-	struct rtc_time tm;
-	int year;
-	int retval = 0;
+	int vrtc_min;
 
-	rtc_time_to_tm(nowtime, &tm);
-	if (!rtc_valid_tm(&tm) && tm.tm_year >= 72) {
-		/*
-		 * tm.year is the number of years since 1900, and the
-		 * vrtc need the years since 1972.
-		 */
-		year = tm.tm_year - 72;
-		spin_lock_irqsave(&rtc_lock, flags);
-		vrtc_cmos_write(year, RTC_YEAR);
-		vrtc_cmos_write(tm.tm_mon, RTC_MONTH);
-		vrtc_cmos_write(tm.tm_mday, RTC_DAY_OF_MONTH);
-		vrtc_cmos_write(tm.tm_hour, RTC_HOURS);
-		vrtc_cmos_write(tm.tm_min, RTC_MINUTES);
-		vrtc_cmos_write(tm.tm_sec, RTC_SECONDS);
-		spin_unlock_irqrestore(&rtc_lock, flags);
-	} else {
-		printk(KERN_ERR
-		       "%s: Invalid vRTC value: write of %lx to vRTC failed\n",
-			__FUNCTION__, nowtime);
-		retval = -EINVAL;
-	}
-	return retval;
+	spin_lock_irqsave(&rtc_lock, flags);
+	vrtc_min = vrtc_cmos_read(RTC_MINUTES);
+
+	real_sec = nowtime % 60;
+	real_min = nowtime / 60;
+	if (((abs(real_min - vrtc_min) + 15)/30) & 1)
+		real_min += 30;
+	real_min %= 60;
+
+	vrtc_cmos_write(real_sec, RTC_SECONDS);
+	vrtc_cmos_write(real_min, RTC_MINUTES);
+	spin_unlock_irqrestore(&rtc_lock, flags);
+
+	return 0;
 }
 
-void __init mrst_rtc_init(void)
+void __init intel_mid_rtc_init(void)
 {
 	unsigned long vrtc_paddr;
 
@@ -154,10 +146,10 @@ static struct platform_device vrtc_device = {
 };
 
 /* Register the RTC device if appropriate */
-static int __init mrst_device_create(void)
+static int __init intel_mid_device_create(void)
 {
 	/* No Moorestown, no device */
-	if (!mrst_identify_cpu())
+	if (!intel_mid_identify_cpu())
 		return -ENODEV;
 	/* No timer, no device */
 	if (!sfi_mrtc_num)
@@ -174,4 +166,4 @@ static int __init mrst_device_create(void)
 	return platform_device_register(&vrtc_device);
 }
 
-module_init(mrst_device_create);
+module_init(intel_mid_device_create);
